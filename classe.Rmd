@@ -1,0 +1,178 @@
+---
+title: "Predicting manner of exercise"
+author: "Sreeya Sreevatsa"
+date: "October 5, 2017"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(warn=-1)
+```
+
+### Overview
+
+The goal of the project is to predict the manner in which people did exercise. This is the "classe" variable in the training set provided on coursera.
+
+### Libraries and random seed setting
+
+The following libraries preceeded with install.packages were used. A seed is set for reproducibility.
+```{r libraries}
+library(rattle)
+library(caret)
+library(rpart)
+library(rpart.plot)
+library(corrplot)
+library(randomForest)
+library(RColorBrewer)
+set.seed(56789)
+```
+
+### Getting data
+
+A path is chosen for the project and data is downloaded from the URL given on coursera website into a folder called data.
+```{r getdata}
+setwd("C:/Users/ssreevatsa/Documents/Personal/R/classe")
+trainUrl <-"https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv"
+testUrl <- "https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv"
+trainFile <- "./data/pml-training.csv"
+testFile  <- "./data/pml-testing.csv"
+if (!file.exists("./data")) {
+  dir.create("./data")
+}
+if (!file.exists(trainFile)) {
+  download.file(trainUrl, destfile = trainFile)
+}
+if (!file.exists(testFile)) {
+  download.file(testUrl, destfile = testFile)
+}
+```
+
+### Reading data
+
+```{r readdata}
+setwd("C:/Users/ssreevatsa/Documents/Personal/R/classe")
+trainRaw <- read.csv(trainFile)
+testRaw <- read.csv(testFile)
+dim(trainRaw)
+dim(testRaw)
+```
+The trainRaw has 160 columns and 19622 observations. The testRaw data has same number of variables and 20 observations.
+
+### Cleaning data
+
+To cleanup data, the following steps are done:
+-Near zero variance variables are removed. That leaves us with 100 out of 160 variables
+-Removing columns that do not contribute to accelerometer measurements reduces the relevant variables to 95
+-Columns with NAs are removed, which leaves us with 54 variables
+-The cleanup reduces our train data to 54 variables of 19622 observations and test data to 54 variables of 20 observations
+
+``` {r cleandata}
+NZV <- nearZeroVar(trainRaw, saveMetrics = TRUE)
+head(NZV, 20)
+training01 <- trainRaw[, !NZV$nzv]
+testing01 <- testRaw[, !NZV$nzv]
+dim(training01)
+dim(testing01)
+
+regex <- grepl("^X|timestamp|user_name", names(training01))
+training <- training01[, !regex]
+testing <- testing01[, !regex]
+dim(training)
+dim(testing)
+
+cond <- (colSums(is.na(training)) == 0)
+training <- training[, cond]
+testing <- testing[, cond]
+dim(training)
+dim(testing)
+```
+
+A look at the data for classe variable shows that level A occurs most frequently. From the reference cited at the end, the definition of classes is
+-exactly according to the specification (Class A)
+-throwing the elbows to the front (Class B)
+-lifting the dumbbell only halfway (Class C)
+-lowering the dumbbell only halfway (Class D)
+-throwing the hips to the front (Class E)
+
+```{r barplot}
+plot(training$classe, col="green", main="Bar plot of levels of the variable classe within the cleaned training data set", xlab="classe levels", ylab="Frequency")
+```
+
+### Partition training set
+
+The cleaned data is further partitioned into training data set, containing 70% of the cleaned training data. The 30% of validation data set is used for cross-validation. Now we have 3 data setsas follows:
+- Training with 54 variables and 13737 observations
+- Validation with 54 variables and 5885 observations
+- Test with 54 variables and 20 observations
+``` {r partition}
+set.seed(56789) # For reproducibile purpose
+inTrain <- createDataPartition(training$classe, p = 0.70, list = FALSE)
+validation <- training[-inTrain, ]
+training <- training[inTrain, ]
+dim(training)
+dim(validation)
+```
+
+## Data modeling
+
+### Decision tree
+
+A fit using decision tree algorithm and a test on validation gives us an accuracy of 74.48% and estimated out of sample error of 25.52%
+
+```{r}
+modelTree <- rpart(classe ~ ., data = training, method = "class")
+prp(modelTree)
+
+predictTree <- predict(modelTree, validation, type = "class")
+confusionMatrix(validation$classe, predictTree)
+accuracy <- postResample(predictTree, validation$classe)
+ose <- 1 - as.numeric(confusionMatrix(validation$classe, predictTree)$overall[1])
+```
+
+### Random forest
+
+Random forest algorithm fitting and a 5 fold cross-validation gives us an accuracy of 99.81% and estimated out of sample error of 0.19%
+
+```{r}
+modelRF <- train(classe ~ ., data = training, method = "rf", trControl = trainControl(method = "cv", 5), ntree = 250)
+modelRF
+
+predictRF <- predict(modelRF, validation)
+confusionMatrix(validation$classe, predictRF)
+accuracy <- postResample(predictRF, validation$classe)
+ose <- 1 - as.numeric(confusionMatrix(validation$classe, predictRF)$overall[1])
+```
+
+### Prediction
+
+Since the random forest fitting model was most accurate of the 2 models, we choose to fit the original testing data with 20 observations with the random forest fit.
+
+```{r}
+predict(modelRF, testing[, -length(names(testing))])
+```
+
+### Generating file
+
+```{r genfile}
+setwd("C:/Users/ssreevatsa/Documents/Personal/R/classe")
+pml_write_files = function(x){
+  n = length(x)
+  for(i in 1:n){
+    filename = paste0("problem_id_",i,".txt")
+    write.table(x[i], file = filename, quote = FALSE, row.names = FALSE, col.names = FALSE)
+  }
+}
+
+pml_write_files(predict(modelRF, testing[, -length(names(testing))]))
+```
+
+### References
+
+The data sources are as follows:
+
+* The training data for this project are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv
+
+* The test data are available here: https://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv
+
+* The data for this project came from this source: http://groupware.les.inf.puc-rio.br/har. 
